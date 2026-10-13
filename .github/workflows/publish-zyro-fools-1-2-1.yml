@@ -1,0 +1,43 @@
+name: Publish Zyro Fools 1.2.1 package
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-zyro-fools-1-2-1.yml
+permissions: {}
+concurrency:
+  group: publish-zyro-fools-1-2-1
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.repository == 'yLordzy/ZyroVersions' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Verify and attach application package to existing release
+        shell: bash
+        run: |
+          set -euo pipefail
+          task_dir="$(mktemp -d)"
+          trap 'rm -rf "$task_dir"' EXIT
+          package_path="$task_dir/ZyroFools-1.2.1-Update.zip"
+          curl --fail --location --retry 3 --output "$package_path" 'https://raw.githubusercontent.com/yLordzy/ZyroVersions/a66c1fd0467d9603bf3b65606bbabec26de8360c/updates/zyro-fools/1.2.1/ZyroFools-1.2.1-Update.zip'
+          python3 - "$package_path" <<'PY'
+          import sys, hashlib, zipfile, json
+          p=sys.argv[1]
+          b=open(p,'rb').read()
+          assert len(b)==877665, 'Unexpected package size'
+          assert hashlib.sha1(b'blob '+str(len(b)).encode()+b'\0'+b).hexdigest()=='111555c67665c3f6b179d86d5de6aa0bbed0c015', 'Package differs from audited artifact'
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              manifest=json.loads(z.read('update-files.json'))
+              assert manifest['version']=='1.2.1'
+              for f in manifest['files']:
+                  assert hashlib.sha256(z.read(f['path'])).hexdigest()==f['sha256']
+          print('Application package verified; no execution of downloaded files.')
+          PY
+          gh release upload v3.5.15 "$package_path" --repo yLordzy/ZyroVersions
