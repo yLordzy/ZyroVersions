@@ -1,0 +1,38 @@
+name: Retire ZyroPanel distribution
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/retire-zyro-panel.yml
+permissions: {}
+jobs:
+  retire:
+    if: github.repository == 'yLordzy/ZyroVersions' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Replace release branding and remove the old product assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          task_dir="$(mktemp -d)"
+          trap 'rm -rf "$task_dir"' EXIT
+          cat > "$task_dir/notes.md" <<'EOF'
+          # Zyro Fools
+          
+          Canal oficial de distribuição do Zyro Fools.
+          
+          O pacote 1.2.1 disponível nesta publicação é uma atualização para instalações existentes.
+          O instalador completo do Zyro Fools, com o Updater.exe incluído, está em preparação.
+          O antigo instalador do ZyroPanel foi retirado da distribuição.
+          EOF
+          gh release edit v3.5.15 --repo yLordzy/ZyroVersions --title "Zyro Fools" --notes-file "$task_dir/notes.md"
+          for asset_name in 'ZyroPanel-Setup-3.5.15.exe' 'ZyroPanel-Setup-3.5.15.exe.blockmap' 'latest.yml'; do
+            if gh api repos/yLordzy/ZyroVersions/releases/tags/v3.5.15 --jq '.assets[].name' | grep -Fxq "$asset_name"; then
+              gh release delete-asset v3.5.15 "$asset_name" --repo yLordzy/ZyroVersions --yes
+            fi
+          done
