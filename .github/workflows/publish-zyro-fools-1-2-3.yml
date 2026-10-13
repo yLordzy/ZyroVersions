@@ -21,7 +21,7 @@ jobs:
           $token=$jwt.value
           Write-Output "::add-mask::$token"
           foreach($name in @('ZyroFools-Setup-1.2.3.exe','ZyroFools-1.2.3-Update.zip','desktop-v2.json')){
-            Invoke-WebRequest ('https://sb-40j78mafr8uc.vercel.run/'+$name) -Headers @{Authorization=('Bearer '+$token)} -OutFile (Join-Path $env:RUNNER_TEMP $name)
+            Invoke-WebRequest ('https://sb-67lbo354qhav.vercel.run/'+$name) -Headers @{Authorization=('Bearer '+$token)} -OutFile (Join-Path $env:RUNNER_TEMP $name)
           }
           if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.3.exe").Hash.ToLower() -ne '63dcd26fe2c8180ae0eb49f22d19d533609106ba182ccf09a3fa41b9f10bdeeb'){throw 'Setup hash mismatch'}
           if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-1.2.3-Update.zip").Hash.ToLower() -ne 'b10bd5dde6556b7b0b2a1e7d25b0c7f19960c1e725c7d3337e558019f3c5750b'){throw 'Patch hash mismatch'}
