@@ -1,0 +1,76 @@
+name: Validate and publish Zyro Fools 1.2.2
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-zyro-fools-1-2-2.yml']
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download compiled public artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = 'https://sb-4fzzkvzg8ybm.vercel.run'
+          foreach ($name in @('ZyroFools-Setup-1.2.2.exe','ZyroFools-1.2.2-Update.zip','desktop-v2.json')) {
+            Invoke-WebRequest "$base/$name" -OutFile "$env:RUNNER_TEMP/$name"
+          }
+          if ((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.2.exe").Hash.ToLower() -ne '61e6b037b7b52ceed074e2f4774e7569cb1213971f392e158bf59a79d6a402c0') { throw 'Setup hash mismatch' }
+          if ((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-1.2.2-Update.zip").Hash.ToLower() -ne '0d62d00b7d5fd43519fff4bc998332bfb2dce46aafc992a2bf0eac26fff97f94') { throw 'Update hash mismatch' }
+      - name: Test native installer and existing installation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $app = Join-Path $env:LOCALAPPDATA 'Programs/ZyroFools'
+          $setup = "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.2.exe"
+          function Install {
+            $p = Start-Process $setup -ArgumentList '/S' -PassThru
+            if (-not $p.WaitForExit(180000)) { throw 'Setup timed out' }
+            if ($p.ExitCode -ne 0) { throw "Setup failed: $($p.ExitCode)" }
+            foreach ($name in @('ZyroFools.exe','Updater.exe','resources/app.asar','resources/zyro-updater/Updater.exe')) {
+              if (-not (Test-Path (Join-Path $app $name))) { throw "Missing $name" }
+            }
+          }
+          function Confirm {
+            Start-Process (Join-Path $app 'Updater.exe') -ArgumentList @('-Action','Confirm','-Target',('"' + $app + '"'),'-Headless') -Wait
+            $pending = Join-Path $env:LOCALAPPDATA 'ZyroFools/Installer/pending.json'
+            for ($i=0; $i -lt 120 -and (Test-Path $pending); $i++) { Start-Sleep -Milliseconds 500 }
+            if (Test-Path $pending) { throw 'Installer confirmation did not clear pending backup' }
+          }
+          Install
+          $runner = Join-Path $env:LOCALAPPDATA 'ZyroFools/Updater/runner'
+          Confirm
+          Get-ChildItem $runner -Filter '*.ps1' | ForEach-Object {
+            $tokens=$null; $errors=$null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName,[ref]$tokens,[ref]$errors) | Out-Null
+            if ($errors.Count) { throw ($errors | Out-String) }
+          }
+          $sentinel = Join-Path $app 'customer-preserved.txt'
+          Set-Content $sentinel 'preserve'
+          $env:ELECTRON_RUN_AS_NODE='1'
+          $p1=Start-Process (Join-Path $app 'ZyroFools.exe') -ArgumentList @('-e','"setInterval(()=>{},1000)"') -PassThru
+          $p2=Start-Process (Join-Path $app 'ZyroFools.exe') -ArgumentList @('-e','"setInterval(()=>{},1000)"') -PassThru
+          Remove-Item Env:ELECTRON_RUN_AS_NODE
+          Start-Sleep -Seconds 2
+          Install
+          if (-not $p1.WaitForExit(10000) -or -not $p2.WaitForExit(10000)) { throw 'Owned processes were not stopped' }
+          if ((Get-Content $sentinel) -ne 'preserve') { throw 'Customer file changed' }
+          Confirm
+          Write-Host 'Fresh install, repeat install, native helper parsing, process shutdown and backup cleanup passed'
+      - name: Publish compiled files only
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release upload v3.5.15 "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.2.exe" "$env:RUNNER_TEMP/ZyroFools-1.2.2-Update.zip" "$env:RUNNER_TEMP/desktop-v2.json" --repo yLordzy/ZyroVersions
+          if ($LASTEXITCODE) { throw 'Release upload failed' }
+          $notes='Zyro Fools 1.2.2 — beta. Instalador completo com Updater.exe incluído. Código fonte e chave privada não fazem parte da distribuição. Validação automatizada de instalação e atualização no Windows concluída.'
+          Set-Content "$env:RUNNER_TEMP/release-notes.txt" $notes
+          gh release edit v3.5.15 --repo yLordzy/ZyroVersions --title 'Zyro Fools 1.2.2' --notes-file "$env:RUNNER_TEMP/release-notes.txt"
+          if ($LASTEXITCODE) { throw 'Release metadata failed' }
