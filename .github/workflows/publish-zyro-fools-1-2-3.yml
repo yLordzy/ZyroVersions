@@ -23,8 +23,8 @@ jobs:
           foreach($name in @('ZyroFools-Setup-1.2.3.exe','ZyroFools-1.2.3-Update.zip','desktop-v2.json')){
             Invoke-WebRequest ('https://sb-40j78mafr8uc.vercel.run/'+$name) -Headers @{Authorization=('Bearer '+$token)} -OutFile (Join-Path $env:RUNNER_TEMP $name)
           }
-          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.3.exe").Hash.ToLower() -ne '1fd2b32c937a32432ad027fca3e7425a7de14fd829204ae5c9c45881fa51b778'){throw 'Setup hash mismatch'}
-          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-1.2.3-Update.zip").Hash.ToLower() -ne 'd7b8736399335d1a12fdd64212962984945203be29a341b4b5320e132fb54e23'){throw 'Patch hash mismatch'}
+          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.3.exe").Hash.ToLower() -ne '63dcd26fe2c8180ae0eb49f22d19d533609106ba182ccf09a3fa41b9f10bdeeb'){throw 'Setup hash mismatch'}
+          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-1.2.3-Update.zip").Hash.ToLower() -ne 'b10bd5dde6556b7b0b2a1e7d25b0c7f19960c1e725c7d3337e558019f3c5750b'){throw 'Patch hash mismatch'}
       - name: Windows fresh install, repeat install and native update transaction
         shell: pwsh
         run: |
@@ -80,7 +80,23 @@ jobs:
           if($inventory.version -ne '1.2.3'){throw 'Installed inventory not updated'}
           if((Get-Content $sentinel) -ne 'preserve' -or (Get-Content $userdata) -ne 'private-data-preserved'){throw 'User data changed during update'}
           if(@(Get-ChildItem (Join-Path $app 'resources/zyro-updater')).Count -ne 1){throw 'Updater source leaked into installed helper folder'}
-          Write-Host 'PASS: fresh install, repeat install, native patch apply/confirm, owned-process shutdown, user data preservation and backup cleanup'
+          node "$env:RUNNER_TEMP/legacy.cjs" (Join-Path $app 'resources/app.asar')
+          $metadata=Get-Content "$env:RUNNER_TEMP/desktop-v2.json" -Raw|ConvertFrom-Json
+          $manifest=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($metadata.payload))|ConvertFrom-Json
+          $cache=Join-Path $env:APPDATA 'ZyroFools/UpdatesV2';New-Item -ItemType Directory -Path $cache -Force|Out-Null
+          $archive=Join-Path $cache ('ZyroFools-1.2.3-'+$manifest.sha256.Substring(0,16)+'-Update.zip')
+          Copy-Item "$env:RUNNER_TEMP/ZyroFools-1.2.3-Update.zip" $archive
+          Copy-Item "$env:RUNNER_TEMP/desktop-v2.json" ($archive+'.json')
+          Start-Process $updater -ArgumentList @('-Action','Apply','-Target',('"'+$app+'"'),'-Archive',('"'+$archive+'"'),'-Envelope',('"'+$archive+'.json"'),'-Headless') -Wait
+          $guard=$null
+          for($i=0;$i -lt 180;$i++){
+            $guard=Get-CimInstance Win32_Process | Where-Object {$_.ExecutablePath -ieq (Join-Path $app 'ZyroFools.exe') -and $_.CommandLine -match '--zyro-guard'}
+            if($guard -and -not(Test-Path $pending)){break}
+            Start-Sleep -Milliseconds 500
+          }
+          if(-not $guard -or (Test-Path $pending)){Logs;throw 'Panel/Guard restart or automatic UI confirmation failed'}
+          if((Test-Path $archive) -or (Test-Path ($archive+'.json'))){throw 'Managed update download cache not cleaned'}
+          Write-Host 'PASS: fresh install, repeat install, native patch apply/confirm, owned-process shutdown, automatic panel/Guard restart, user data preservation and download/backup cleanup'
       - name: Publish compiled client only
         shell: pwsh
         env:
