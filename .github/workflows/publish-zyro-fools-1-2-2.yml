@@ -30,7 +30,11 @@ jobs:
           $setup = "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.2.exe"
           function Install {
             $p = Start-Process $setup -ArgumentList '/S' -PassThru
-            if (-not $p.WaitForExit(180000)) { throw 'Setup timed out' }
+            if (-not $p.WaitForExit(90000)) {
+              Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'Zyro|Updater|powershell' } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List | Out-String | Write-Host
+              Get-ChildItem (Join-Path $env:LOCALAPPDATA 'ZyroFools') -Filter '*.log' -Recurse -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName; Get-Content $_.FullName -Tail 30 }
+              throw 'Setup timed out'
+            }
             if ($p.ExitCode -ne 0) { throw "Setup failed: $($p.ExitCode)" }
             foreach ($name in @('ZyroFools.exe','Updater.exe','resources/app.asar','resources/zyro-updater/Updater.exe')) {
               if (-not (Test-Path (Join-Path $app $name))) { throw "Missing $name" }
