@@ -23,8 +23,8 @@ jobs:
           foreach($name in @('ZyroFools-Setup-1.2.3.exe','ZyroFools-1.2.3-Update.zip','desktop-v2.json')){
             Invoke-WebRequest ('https://sb-40j78mafr8uc.vercel.run/'+$name) -Headers @{Authorization=('Bearer '+$token)} -OutFile (Join-Path $env:RUNNER_TEMP $name)
           }
-          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.3.exe").Hash.ToLower() -ne 'aaf365519be8f6b3f6b95ab386afbb6c349fa5d6ac67a68b674187c442bbc213'){throw 'Setup hash mismatch'}
-          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-1.2.3-Update.zip").Hash.ToLower() -ne '332a726836216b7ae77a7e14427cc43ca14d0327531b811ad73422097f684803'){throw 'Patch hash mismatch'}
+          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.3.exe").Hash.ToLower() -ne '1fd2b32c937a32432ad027fca3e7425a7de14fd829204ae5c9c45881fa51b778'){throw 'Setup hash mismatch'}
+          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-1.2.3-Update.zip").Hash.ToLower() -ne 'd7b8736399335d1a12fdd64212962984945203be29a341b4b5320e132fb54e23'){throw 'Patch hash mismatch'}
       - name: Windows fresh install, repeat install and native update transaction
         shell: pwsh
         run: |
