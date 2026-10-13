@@ -20,8 +20,8 @@ jobs:
           foreach ($name in @('ZyroFools-Setup-1.2.2.exe','ZyroFools-1.2.2-Update.zip','desktop-v2.json')) {
             Invoke-WebRequest "$base/$name" -OutFile "$env:RUNNER_TEMP/$name"
           }
-          if ((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.2.exe").Hash.ToLower() -ne '61e6b037b7b52ceed074e2f4774e7569cb1213971f392e158bf59a79d6a402c0') { throw 'Setup hash mismatch' }
-          if ((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-1.2.2-Update.zip").Hash.ToLower() -ne '0d62d00b7d5fd43519fff4bc998332bfb2dce46aafc992a2bf0eac26fff97f94') { throw 'Update hash mismatch' }
+          if ((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.2.exe").Hash.ToLower() -ne '1aa76f359512b7a269ef221058a352b8ef4db6aeb27b429b807c1d9ade409727') { throw 'Setup hash mismatch' }
+          if ((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-1.2.2-Update.zip").Hash.ToLower() -ne 'fa1f199ca3d7ec6b6bb8b658468511abf153b6e531e97e7665dc6db3f81cbb64') { throw 'Update hash mismatch' }
       - name: Test native installer and existing installation
         shell: pwsh
         run: |
