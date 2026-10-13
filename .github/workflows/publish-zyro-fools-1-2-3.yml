@@ -87,7 +87,8 @@ jobs:
           $archive=Join-Path $cache ('ZyroFools-1.2.3-'+$manifest.sha256.Substring(0,16)+'-Update.zip')
           Copy-Item "$env:RUNNER_TEMP/ZyroFools-1.2.3-Update.zip" $archive
           Copy-Item "$env:RUNNER_TEMP/desktop-v2.json" ($archive+'.json')
-          Start-Process $updater -ArgumentList @('-Action','Apply','-Target',('"'+$app+'"'),'-Archive',('"'+$archive+'"'),'-Envelope',('"'+$archive+'.json"'),'-Headless') -Wait
+          $started=Start-Process $updater -ArgumentList @('-Action','Apply','-Target',('"'+$app+'"'),'-Archive',('"'+$archive+'"'),'-Envelope',('"'+$archive+'.json"'),'-Headless') -PassThru
+          if(-not $started.WaitForExit(15000)){throw 'Updater launcher did not exit'}
           $guard=$null
           for($i=0;$i -lt 180;$i++){
             $guard=Get-CimInstance Win32_Process | Where-Object {$_.ExecutablePath -ieq (Join-Path $app 'ZyroFools.exe') -and $_.CommandLine -match '--zyro-guard'}
