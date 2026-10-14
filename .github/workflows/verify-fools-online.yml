@@ -1,0 +1,35 @@
+name: Verify installed Zyro Fools online update channel
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/verify-fools-online.yml']
+permissions:
+  contents: read
+jobs:
+  online:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - name: Verify compiled installed updater against public Latest release
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $release=Invoke-RestMethod 'https://api.github.com/repos/yLordzy/ZyroVersions/releases/latest'
+          $asset=$release.assets|Where-Object {$_.name -eq 'ZyroFools-Setup-1.2.3.exe'}
+          if(-not $asset){throw 'Official setup missing'}
+          $setup=Join-Path $env:RUNNER_TEMP $asset.name
+          Invoke-WebRequest $asset.browser_download_url -OutFile $setup
+          if((Get-FileHash $setup).Hash.ToLower() -ne '0f67487ceea1e3107a56654cb20e01b91de56aed129077de69e7953a82625a60'){throw 'Setup integrity mismatch'}
+          $p=Start-Process $setup -ArgumentList '/S' -PassThru
+          if(-not $p.WaitForExit(180000) -or $p.ExitCode -ne 0){throw 'Setup failed'}
+          $test=@'
+          const fs=require('fs'),path=require('path'),os=require('os');
+          const app=path.join(process.env.LOCALAPPDATA,'Programs','ZyroFools','resources','app.asar');
+          const {Updater}=require(path.join(app,'updater-core.js'));
+          const config=require(path.join(app,'update-config.json'));
+          (async()=>{const cache=fs.mkdtempSync(path.join(os.tmpdir(),'zyro-online-'));try{const u=new Updater({config,current:'1.2.2',cache,onState:s=>console.log(s.status)});await u.check();if(u.state.status!=='ready'||u.state.version!=='1.2.3')throw Error(JSON.stringify(u.state));console.log('PASS: installed compiled updater reads public Latest, authenticates metadata, downloads and verifies actual update ZIP.');}finally{fs.rmSync(cache,{recursive:true,force:true});}})().catch(e=>{console.error(e);process.exitCode=1});
+          '@
+          $script=Join-Path $env:RUNNER_TEMP 'online.cjs';Set-Content $script $test
+          $env:ELECTRON_RUN_AS_NODE='1'
+          & (Join-Path $env:LOCALAPPDATA 'Programs/ZyroFools/ZyroFools.exe') $script
+          if($LASTEXITCODE){throw 'Installed online updater test failed'}
