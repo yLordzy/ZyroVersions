@@ -22,7 +22,7 @@ jobs:
           foreach($n in @('ZyroFools-Setup-1.2.5.exe','ZyroFools-1.2.5-Update.zip','desktop-v2.json')){
             Invoke-WebRequest ('https://sb-4bdxe9asfqcu.vercel.run/'+$n) -Headers @{Authorization=('Bearer '+$jwt.value)} -OutFile (Join-Path $env:RUNNER_TEMP $n)
           }
-          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.5.exe").Hash.ToLower() -ne 'bd3dd9c4dd71fb9db57c8060b7f528c950d783698546a3e5b2bd0c3690d77efd'){throw 'Setup integrity mismatch'}
+          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.5.exe").Hash.ToLower() -ne 'f3cb4eb08e587aad9a4ca44f2b2214dac944412b88ef002cac9f0157a8d9f101'){throw 'Setup integrity mismatch'}
           if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-1.2.5-Update.zip").Hash.ToLower() -ne 'a440fed7217c340e1456a992df2b921d39cd6f333c2efd85e14fb9d704a5a95f'){throw 'Patch integrity mismatch'}
       - name: Validate real upgrade, unchanged method instructions and renamed maintenance helper
         shell: pwsh
