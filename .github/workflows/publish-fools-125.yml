@@ -1,0 +1,98 @@
+name: Publish Zyro Fools 1.2.5 maintenance branding
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-fools-125.yml']
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Download private compiled artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $jwt=Invoke-RestMethod ($env:ACTIONS_ID_TOKEN_REQUEST_URL+'&audience=zyro-fools-private-transfer') -Headers @{Authorization=('Bearer '+$env:ACTIONS_ID_TOKEN_REQUEST_TOKEN)}
+          Write-Output ("::add-mask::"+$jwt.value)
+          foreach($n in @('ZyroFools-Setup-1.2.5.exe','ZyroFools-1.2.5-Update.zip','desktop-v2.json')){
+            Invoke-WebRequest ('https://sb-4bdxe9asfqcu.vercel.run/'+$n) -Headers @{Authorization=('Bearer '+$jwt.value)} -OutFile (Join-Path $env:RUNNER_TEMP $n)
+          }
+          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.5.exe").Hash.ToLower() -ne '8adbc925d600cf1fccbb663cf446f0c9e72d851130467215d1370de7ec278009'){throw 'Setup integrity mismatch'}
+          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-1.2.5-Update.zip").Hash.ToLower() -ne '5a28149c7660505771d7894be1fc7d9f6abddf4663146512057046b66d42565b'){throw 'Patch integrity mismatch'}
+      - name: Validate real upgrade, unchanged method instructions and renamed maintenance helper
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          function Fingerprint([string]$file){
+            $stream=[IO.File]::OpenRead($file)
+            $pe=[System.Reflection.PortableExecutable.PEReader]::new($stream)
+            try{
+              $md=[System.Reflection.Metadata.PEReaderExtensions]::GetMetadataReader($pe)
+              $parts=[Collections.Generic.List[string]]::new()
+              foreach($handle in $md.MethodDefinitions){
+                $m=$md.GetMethodDefinition($handle)
+                if($m.RelativeVirtualAddress){
+                  $body=[System.Reflection.Metadata.PEReaderExtensions]::GetMethodBody($pe,$m.RelativeVirtualAddress)
+                  $parts.Add([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($body.GetILBytes())))
+                }
+              }
+              return ($parts -join ':')
+            }finally{$pe.Dispose();$stream.Dispose()}
+          }
+          Invoke-WebRequest 'https://github.com/yLordzy/ZyroVersions/releases/download/v1.2.4/ZyroFools-Setup-1.2.4.exe' -OutFile "$env:RUNNER_TEMP/old.exe"
+          $p=Start-Process "$env:RUNNER_TEMP/old.exe" -ArgumentList '/S' -PassThru
+          if(-not $p.WaitForExit(180000) -or $p.ExitCode -ne 0){throw 'Baseline setup failed'}
+          $app=Join-Path $env:LOCALAPPDATA 'Programs/ZyroFools'
+          $core=Join-Path $app 'resources/core'
+          $originalCore=Fingerprint (Join-Path $core 'DolinTools.Core.dll')
+          $originalHelper=Fingerprint (Join-Path $core 'tools/updater/DolinToolsUpdater.dll')
+          $sentinel=Join-Path $app 'customer-preserved.txt';Set-Content $sentinel 'preserve'
+          Start-Process (Join-Path $app 'ZyroFools.exe')
+          Start-Sleep -Seconds 5
+          $cache=Join-Path $env:APPDATA 'ZyroFools/UpdatesV2';New-Item -ItemType Directory -Path $cache -Force|Out-Null
+          $archive=Join-Path $cache 'ZyroFools-1.2.5-5a28149c76605057-Update.zip'
+          Copy-Item "$env:RUNNER_TEMP/ZyroFools-1.2.5-Update.zip" $archive
+          Copy-Item "$env:RUNNER_TEMP/desktop-v2.json" ($archive+'.json')
+          $p=Start-Process (Join-Path $app 'resources/zyro-updater/Updater.exe') -ArgumentList @('-Action','Apply','-Target',('"'+$app+'"'),'-Archive',('"'+$archive+'"'),'-Envelope',('"'+$archive+'.json"'),'-Headless') -PassThru
+          if(-not $p.WaitForExit(15000)){throw 'Launcher did not exit'}
+          $pending=Join-Path $env:LOCALAPPDATA 'ZyroFools/Updater/pending.json'
+          $ok=$false
+          for($i=0;$i -lt 120;$i++){
+            $guard=Get-CimInstance Win32_Process|Where-Object {$_.ExecutablePath -ieq (Join-Path $app 'ZyroFools.exe') -and $_.CommandLine -match '--zyro-guard'}
+            if($guard -and -not(Test-Path $pending) -and -not(Test-Path $archive) -and (Get-FileHash (Join-Path $app 'resources/app.asar')).Hash.ToLower() -eq '20a800cb0867def1243f1ee5b39ec59317175640b6a3409b5d228986880de400'){$ok=$true;break}
+            Start-Sleep -Milliseconds 500
+          }
+          if(-not $ok){Get-ChildItem (Join-Path $env:LOCALAPPDATA 'ZyroFools') -Filter '*.log' -Recurse|ForEach-Object{Write-Host $_.FullName;Get-Content $_.FullName -Tail 15};throw 'Upgrade/restart/cleanup failed'}
+          if((Fingerprint (Join-Path $core 'DolinTools.Core.dll')) -ne $originalCore){throw 'Core method instructions changed'}
+          if((Fingerprint (Join-Path $core 'tools/updater/ZyroFools.Repairs.dll')) -ne $originalHelper){throw 'Maintenance method instructions changed'}
+          $helper=Join-Path $core 'tools/updater/ZyroFools.Repairs.exe'
+          $info=[Diagnostics.FileVersionInfo]::GetVersionInfo($helper)
+          Write-Host ('Maintenance application: '+$info.FileDescription)
+          if($info.FileDescription -match 'Dolin'){throw 'Old executable description remains'}
+          $proof=Join-Path $env:RUNNER_TEMP 'maintenance-proof';New-Item -ItemType Directory -Path $proof -Force|Out-Null
+          $source=Join-Path $proof 'source.txt';Set-Content $source 'Zyro Fools maintenance compatibility proof'
+          $destination=Join-Path $proof 'destination'
+          $plan=Join-Path $proof 'plan.json'
+          @{SteamPath=$destination;Files=@(@{Name='copied.txt';Source=$source;Sha256=(Get-FileHash $source).Hash});Operations=@()}|ConvertTo-Json -Depth 6|Set-Content $plan
+          $p=Start-Process $helper -ArgumentList ('"'+$plan+'"') -PassThru
+          if(-not $p.WaitForExit(30000)){throw 'Maintenance helper timed out'}
+          if(-not(Test-Path (Join-Path $destination 'copied.txt')) -or (Get-FileHash (Join-Path $destination 'copied.txt')).Hash -ne (Get-FileHash $source).Hash){throw 'Maintenance operation compatibility failed'}
+          if((Get-Content $sentinel) -ne 'preserve'){throw 'Customer file changed'}
+          $p=Start-Process "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.5.exe" -ArgumentList '/S' -PassThru
+          if(-not $p.WaitForExit(180000) -or $p.ExitCode -ne 0){throw 'New setup failed'}
+          if((Get-Content $sentinel) -ne 'preserve'){throw 'Customer file changed during setup'}
+          if((Get-Content (Join-Path $app 'resources/install-payload.json') -Raw|ConvertFrom-Json).version -ne '1.2.5'){throw 'Wrong installed version'}
+          Write-Host 'PASS: 1.2.4 -> 1.2.5 update, restart, cleanup, identical method instructions, renamed helper binding and real copy/hash operation'
+      - name: Publish compiled client only
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          gh release create v1.2.5 "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.5.exe" "$env:RUNNER_TEMP/ZyroFools-1.2.5-Update.zip" "$env:RUNNER_TEMP/desktop-v2.json" --repo yLordzy/ZyroVersions --latest --title 'Zyro Fools 1.2.5' --notes 'Corrige a identidade do auxiliar de manutenção para ZyroFools.Repairs.exe e atualiza as referências de carregamento. Instruções dos métodos preservadas e operação de cópia/verificação testada no Windows. Atualização assinada, reinício e limpeza testados desde a versão 1.2.4. Código fonte não incluído.'
+          if($LASTEXITCODE){throw 'Release publication failed'}
