@@ -15,11 +15,11 @@ jobs:
         run: |
           $ErrorActionPreference='Stop'
           $release=Invoke-RestMethod 'https://api.github.com/repos/yLordzy/ZyroVersions/releases/latest'
-          $asset=$release.assets|Where-Object {$_.name -eq 'ZyroFools-Setup-1.2.4.exe'}
+          $asset=$release.assets|Where-Object {$_.name -eq 'ZyroFools-Setup-1.2.5.exe'}
           if(-not $asset){throw 'Official setup missing'}
           $setup=Join-Path $env:RUNNER_TEMP $asset.name
           Invoke-WebRequest $asset.browser_download_url -OutFile $setup
-          if((Get-FileHash $setup).Hash.ToLower() -ne '56f4a35707c1ee60a3944b2b70556347eb29d17036b92e2b55f40c108378d5c8'){throw 'Setup integrity mismatch'}
+          if((Get-FileHash $setup).Hash.ToLower() -ne 'f3cb4eb08e587aad9a4ca44f2b2214dac944412b88ef002cac9f0157a8d9f101'){throw 'Setup integrity mismatch'}
           $p=Start-Process $setup -ArgumentList '/S' -PassThru
           if(-not $p.WaitForExit(180000) -or $p.ExitCode -ne 0){throw 'Setup failed'}
           $test=@'
@@ -27,7 +27,7 @@ jobs:
           const app=path.join(process.env.LOCALAPPDATA,'Programs','ZyroFools','resources','app.asar');
           const {Updater}=require(path.join(app,'updater-core.js'));
           const config=require(path.join(app,'update-config.json'));
-          (async()=>{const cache=fs.mkdtempSync(path.join(os.tmpdir(),'zyro-online-'));try{const u=new Updater({config,current:'1.2.3',cache,onState:s=>console.log(s.status)});for(let attempt=0;attempt<12;attempt++){await u.check();if(u.state.status==='ready')break;await new Promise(r=>setTimeout(r,10000));}if(u.state.status!=='ready'||u.state.version!=='1.2.4')throw Error(JSON.stringify(u.state));fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'online-pass.json'),JSON.stringify(u.state));console.log('PASS: installed compiled updater reads public Latest, authenticates metadata, downloads and verifies actual update ZIP.');}finally{fs.rmSync(cache,{recursive:true,force:true});}})().catch(e=>{console.error(e);process.exitCode=1});
+          (async()=>{const cache=fs.mkdtempSync(path.join(os.tmpdir(),'zyro-online-'));try{const u=new Updater({config,current:'1.2.4',cache,onState:s=>console.log(s.status)});for(let attempt=0;attempt<12;attempt++){await u.check();if(u.state.status==='ready')break;await new Promise(r=>setTimeout(r,10000));}if(u.state.status!=='ready'||u.state.version!=='1.2.5')throw Error(JSON.stringify(u.state));fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'online-pass.json'),JSON.stringify(u.state));console.log('PASS: installed compiled updater reads public Latest, authenticates metadata, downloads and verifies actual update ZIP.');}finally{fs.rmSync(cache,{recursive:true,force:true});}})().catch(e=>{console.error(e);process.exitCode=1});
           '@
           $script=Join-Path $env:RUNNER_TEMP 'online.cjs';Set-Content $script $test
           $env:ELECTRON_RUN_AS_NODE='1'
@@ -37,4 +37,4 @@ jobs:
           Get-Content "$env:RUNNER_TEMP/online.stderr"
           if(-not(Test-Path "$env:RUNNER_TEMP/online-pass.json")){throw 'Installed online updater test failed'}
           $result=Get-Content "$env:RUNNER_TEMP/online-pass.json" -Raw|ConvertFrom-Json
-          if($result.status -ne 'ready' -or $result.version -ne '1.2.4'){throw 'Wrong online update version'}
+          if($result.status -ne 'ready' -or $result.version -ne '1.2.5'){throw 'Wrong online update version'}
