@@ -23,7 +23,7 @@ jobs:
             Invoke-WebRequest ('https://sb-4bdxe9asfqcu.vercel.run/'+$n) -Headers @{Authorization=('Bearer '+$jwt.value)} -OutFile (Join-Path $env:RUNNER_TEMP $n)
           }
           if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.5.exe").Hash.ToLower() -ne '8adbc925d600cf1fccbb663cf446f0c9e72d851130467215d1370de7ec278009'){throw 'Setup integrity mismatch'}
-          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-1.2.5-Update.zip").Hash.ToLower() -ne '5a28149c7660505771d7894be1fc7d9f6abddf4663146512057046b66d42565b'){throw 'Patch integrity mismatch'}
+          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-1.2.5-Update.zip").Hash.ToLower() -ne '7d9be9dfc40883098383232c46d542e060b33649920ed66b358a2c6450e36dab'){throw 'Patch integrity mismatch'}
       - name: Validate real upgrade, unchanged method instructions and renamed maintenance helper
         shell: pwsh
         run: |
@@ -55,7 +55,7 @@ jobs:
           Start-Process (Join-Path $app 'ZyroFools.exe')
           Start-Sleep -Seconds 5
           $cache=Join-Path $env:APPDATA 'ZyroFools/UpdatesV2';New-Item -ItemType Directory -Path $cache -Force|Out-Null
-          $archive=Join-Path $cache 'ZyroFools-1.2.5-5a28149c76605057-Update.zip'
+          $archive=Join-Path $cache 'ZyroFools-1.2.5-7d9be9dfc4088309-Update.zip'
           Copy-Item "$env:RUNNER_TEMP/ZyroFools-1.2.5-Update.zip" $archive
           Copy-Item "$env:RUNNER_TEMP/desktop-v2.json" ($archive+'.json')
           $p=Start-Process (Join-Path $app 'resources/zyro-updater/Updater.exe') -ArgumentList @('-Action','Apply','-Target',('"'+$app+'"'),'-Archive',('"'+$archive+'"'),'-Envelope',('"'+$archive+'.json"'),'-Headless') -PassThru
