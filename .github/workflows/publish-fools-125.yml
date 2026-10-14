@@ -22,8 +22,8 @@ jobs:
           foreach($n in @('ZyroFools-Setup-1.2.5.exe','ZyroFools-1.2.5-Update.zip','desktop-v2.json')){
             Invoke-WebRequest ('https://sb-4bdxe9asfqcu.vercel.run/'+$n) -Headers @{Authorization=('Bearer '+$jwt.value)} -OutFile (Join-Path $env:RUNNER_TEMP $n)
           }
-          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.5.exe").Hash.ToLower() -ne '8adbc925d600cf1fccbb663cf446f0c9e72d851130467215d1370de7ec278009'){throw 'Setup integrity mismatch'}
-          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-1.2.5-Update.zip").Hash.ToLower() -ne '7d9be9dfc40883098383232c46d542e060b33649920ed66b358a2c6450e36dab'){throw 'Patch integrity mismatch'}
+          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-Setup-1.2.5.exe").Hash.ToLower() -ne 'bd3dd9c4dd71fb9db57c8060b7f528c950d783698546a3e5b2bd0c3690d77efd'){throw 'Setup integrity mismatch'}
+          if((Get-FileHash "$env:RUNNER_TEMP/ZyroFools-1.2.5-Update.zip").Hash.ToLower() -ne 'a440fed7217c340e1456a992df2b921d39cd6f333c2efd85e14fb9d704a5a95f'){throw 'Patch integrity mismatch'}
       - name: Validate real upgrade, unchanged method instructions and renamed maintenance helper
         shell: pwsh
         run: |
@@ -55,7 +55,7 @@ jobs:
           Start-Process (Join-Path $app 'ZyroFools.exe')
           Start-Sleep -Seconds 5
           $cache=Join-Path $env:APPDATA 'ZyroFools/UpdatesV2';New-Item -ItemType Directory -Path $cache -Force|Out-Null
-          $archive=Join-Path $cache 'ZyroFools-1.2.5-7d9be9dfc4088309-Update.zip'
+          $archive=Join-Path $cache 'ZyroFools-1.2.5-a440fed7217c340e-Update.zip'
           Copy-Item "$env:RUNNER_TEMP/ZyroFools-1.2.5-Update.zip" $archive
           Copy-Item "$env:RUNNER_TEMP/desktop-v2.json" ($archive+'.json')
           $p=Start-Process (Join-Path $app 'resources/zyro-updater/Updater.exe') -ArgumentList @('-Action','Apply','-Target',('"'+$app+'"'),'-Archive',('"'+$archive+'"'),'-Envelope',('"'+$archive+'.json"'),'-Headless') -PassThru
@@ -73,7 +73,7 @@ jobs:
           $helper=Join-Path $core 'tools/updater/ZyroFools.Repairs.exe'
           $info=[Diagnostics.FileVersionInfo]::GetVersionInfo($helper)
           Write-Host ('Maintenance application: '+$info.FileDescription)
-          if($info.FileDescription -match 'Dolin'){throw 'Old executable description remains'}
+          if($info.FileDescription -ne 'Zyro Fools Repairs'){throw 'Wrong maintenance executable description'}
           $proof=Join-Path $env:RUNNER_TEMP 'maintenance-proof';New-Item -ItemType Directory -Path $proof -Force|Out-Null
           $source=Join-Path $proof 'source.txt';Set-Content $source 'Zyro Fools maintenance compatibility proof'
           $destination=Join-Path $proof 'destination'
