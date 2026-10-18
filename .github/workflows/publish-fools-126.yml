@@ -24,7 +24,11 @@ jobs:
           $root=Join-Path $env:RUNNER_TEMP 'private-build';New-Item -ItemType Directory -Force $root|Out-Null
           Invoke-WebRequest "$env:TRANSFER/buildkit.zip" -Headers @{Authorization=('Bearer '+(Token))} -OutFile "$root/buildkit.zip"
           Expand-Archive "$root/buildkit.zip" "$root/source"
-          if(-not(Test-Path "${env:ProgramFiles(x86)}/NSIS/makensis.exe")){choco install nsis -y --no-progress;if($LASTEXITCODE){throw 'NSIS install failed'}}
+          Invoke-WebRequest 'https://github.com/electron-userland/electron-builder-binaries/releases/download/nsis-3.0.4.1/nsis-3.0.4.1.7z' -OutFile "$root/nsis.7z"
+          & 7z x "$root/nsis.7z" "-o$root/nsis" -y | Out-Null
+          if($LASTEXITCODE){throw 'NSIS extraction failed'}
+          $env:ZYRO_MAKENSIS=(Get-ChildItem "$root/nsis" -Filter makensis.exe -Recurse|Select-Object -First 1).FullName
+          if(-not $env:ZYRO_MAKENSIS){throw 'NSIS compiler missing'}
           & "$root/source/scripts/build-release126.ps1"
           if($LASTEXITCODE){throw 'Private build failed'}
           foreach($pair in @(@('setup.exe','ZyroFools-Setup-1.2.6.exe'),@('update.zip','ZyroFools-1.2.6-Update.zip'),@('report.json','report.json'))){
