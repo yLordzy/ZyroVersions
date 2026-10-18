@@ -1,0 +1,76 @@
+name: Build and validate Zyro Fools 1.2.6
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-fools-126.yml']
+permissions:
+  contents: write
+  id-token: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    env:
+      TRANSFER: https://sb-3vs9es54usuz.vercel.run
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build private application and run compatibility checks
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          function Token { (Invoke-RestMethod ($env:ACTIONS_ID_TOKEN_REQUEST_URL+'&audience=zyro-fools-private-transfer') -Headers @{Authorization=('Bearer '+$env:ACTIONS_ID_TOKEN_REQUEST_TOKEN)}).value }
+          $root=Join-Path $env:RUNNER_TEMP 'private-build';New-Item -ItemType Directory -Force $root|Out-Null
+          Invoke-WebRequest "$env:TRANSFER/buildkit.zip" -Headers @{Authorization=('Bearer '+(Token))} -OutFile "$root/buildkit.zip"
+          Expand-Archive "$root/buildkit.zip" "$root/source"
+          if(-not(Test-Path "${env:ProgramFiles(x86)}/NSIS/makensis.exe")){choco install nsis -y --no-progress;if($LASTEXITCODE){throw 'NSIS install failed'}}
+          & "$root/source/scripts/build-release126.ps1"
+          if($LASTEXITCODE){throw 'Private build failed'}
+          foreach($pair in @(@('setup.exe','ZyroFools-Setup-1.2.6.exe'),@('update.zip','ZyroFools-1.2.6-Update.zip'),@('report.json','report.json'))){
+            Invoke-WebRequest "$env:TRANSFER/$($pair[0])" -Method Put -InFile "$root/source/dist/$($pair[1])" -Headers @{Authorization=('Bearer '+(Token))} -ContentType 'application/octet-stream'|Out-Null
+          }
+      - name: Wait for owner-signed release and validate installation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          function Token { (Invoke-RestMethod ($env:ACTIONS_ID_TOKEN_REQUEST_URL+'&audience=zyro-fools-private-transfer') -Headers @{Authorization=('Bearer '+$env:ACTIONS_ID_TOKEN_REQUEST_TOKEN)}).value }
+          $root=Join-Path $env:RUNNER_TEMP 'private-build'
+          $feed="$root/source/dist/desktop-v2.json"
+          for($i=0;$i -lt 80;$i++){try{Invoke-WebRequest "$env:TRANSFER/desktop-v2.json" -Headers @{Authorization=('Bearer '+(Token))} -OutFile $feed;break}catch{Start-Sleep -Seconds 10}}
+          if(-not(Test-Path $feed)){throw 'Signed manifest not provided'}
+          $envelope=Get-Content $feed -Raw|ConvertFrom-Json
+          $meta=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($envelope.payload))|ConvertFrom-Json
+          if($meta.version -ne '1.2.6' -or $meta.sha256 -ne (Get-FileHash "$root/source/dist/ZyroFools-1.2.6-Update.zip").Hash.ToLower()){throw 'Signed package mismatch'}
+          # Exercise the compiled updater from the real previous version.
+          $old=Join-Path $env:RUNNER_TEMP 'baseline125/old.exe'
+          $p=Start-Process $old -ArgumentList '/S' -PassThru
+          if(-not $p.WaitForExit(180000) -or $p.ExitCode -ne 0){throw 'Baseline install failed'}
+          $target=Join-Path $env:LOCALAPPDATA 'Programs/ZyroFools'
+          $cache=Join-Path $env:APPDATA 'ZyroFools/UpdatesV2';New-Item -ItemType Directory -Force $cache|Out-Null
+          $archive=Join-Path $cache ('ZyroFools-1.2.6-'+$meta.sha256.Substring(0,16)+'-Update.zip')
+          Copy-Item "$root/source/dist/ZyroFools-1.2.6-Update.zip" $archive
+          Copy-Item $feed ($archive+'.json')
+          $p=Start-Process "$target/Updater.exe" -ArgumentList @('-Action','Apply','-Archive',('"'+$archive+'"'),'-Envelope',('"'+$archive+'.json"'),'-Target',('"'+$target+'"'),'-Headless') -PassThru
+          $null=$p.WaitForExit(15000)
+          $pending=Join-Path $env:LOCALAPPDATA 'ZyroFools/Updater/pending.json'
+          for($i=0;$i -lt 120;$i++){Start-Sleep -Seconds 2;if(-not(Test-Path $archive) -and -not(Test-Path $pending)){break}}
+          if(Test-Path $archive){Get-Content "$env:LOCALAPPDATA/ZyroFools/Updater/update.log" -Tail 25;throw 'Updater failed to confirm/clean cache'}
+          $inventory=Get-Content "$target/resources/install-payload.json" -Raw|ConvertFrom-Json
+          if($inventory.version -ne '1.2.6'){throw 'Updated inventory version mismatch'}
+          foreach($f in $inventory.files){if((Get-FileHash (Join-Path $target $f.path)).Hash.ToLower() -ne $f.sha256){throw ('Installed integrity mismatch: '+$f.path)}}
+          if(-not(Get-CimInstance Win32_Process|Where-Object {$_.CommandLine -like '*--zyro-guard*'})){throw 'Guard not restarted'}
+          'PASS: native 1.2.5 updater applied signed 1.2.6, restarted panel/Guard and removed temporary files.'
+          # Full installer upgrades an existing installation too.
+          $p=Start-Process "$root/source/dist/ZyroFools-Setup-1.2.6.exe" -ArgumentList '/S' -PassThru
+          if(-not $p.WaitForExit(180000) -or $p.ExitCode -ne 0){throw 'Full setup upgrade failed'}
+      - name: Publish compiled assets only
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $dist=Join-Path $env:RUNNER_TEMP 'private-build/source/dist'
+          $notes='Zyro Fools 1.2.6: núcleo 4.8, compatibilidade da integração GreenTools/OpenSteamTools, nova API de fontes e auxiliar administrativo. Mantém login, Guard, tema e updater próprios. Distribuição de binários.'
+          gh release create v1.2.6 --repo yLordzy/ZyroVersions --title 'Zyro Fools 1.2.6' --notes $notes --latest "$dist/ZyroFools-Setup-1.2.6.exe" "$dist/ZyroFools-1.2.6-Update.zip" "$dist/desktop-v2.json"
+          if($LASTEXITCODE){throw 'Release publishing failed'}
