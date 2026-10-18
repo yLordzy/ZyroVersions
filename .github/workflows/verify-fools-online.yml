@@ -12,9 +12,11 @@ jobs:
     steps:
       - name: Verify compiled installed updater against public Latest release
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference='Stop'
-          $release=Invoke-RestMethod 'https://api.github.com/repos/yLordzy/ZyroVersions/releases/latest'
+          $release=Invoke-RestMethod 'https://api.github.com/repos/yLordzy/ZyroVersions/releases/latest' -Headers @{Authorization=('Bearer '+$env:GH_TOKEN)}
           $asset=$release.assets|Where-Object {$_.name -eq 'ZyroFools-Setup-1.2.6.exe'}
           if(-not $asset){throw 'Official setup missing'}
           $setup=Join-Path $env:RUNNER_TEMP $asset.name
