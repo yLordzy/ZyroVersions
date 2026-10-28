@@ -25,10 +25,14 @@ jobs:
             try {Invoke-WebRequest $url -OutFile $beta -TimeoutSec 180; $downloaded=$true; break} catch {Write-Host 'Candidate download unavailable; checking the next official location.'}
           }
           if(-not $downloaded){throw 'Beta installer unavailable.'}
-          if((Get-FileHash $beta).Hash.ToLowerInvariant() -ne 'f1c299bbcd874d269332eb72ad65362b9888cfe6d7288002eaff45878335afc9'){throw 'Beta SHA-256 mismatch.'}
-          foreach($asset in @(@{name='ZyroFools-1.2.7-Update.zip';sha='30a3b59c925f14657bd5e273a48e21e2b53bff42a70e149cac0ba2f97ea68376'},@{name='desktop-v2.json';sha='f48c5e473d87722b2dfd7764e9a7b1b3e1f02a90acfae6caf4824474d28f8857'})){
+          if((Get-FileHash $beta).Hash.ToLowerInvariant() -ne '4a3d289050c8322cdbe74069467b963b176ff6370db40d76814a6af8f6ca05f0'){throw 'Beta SHA-256 mismatch.'}
+          foreach($asset in @(@{name='ZyroFools-1.2.7-Update.zip';sha='8405db78290835201665e8e37b82ce90580937c0517f3ad5e2224e6301509012'},@{name='desktop-v2.json';sha='a56ad780a548c37b13a79ec86a09928c021343af1b8c08cb43ca99e3e7d82c99'})){
             $file=Join-Path $work $asset.name
-            Invoke-WebRequest ('https://sb-2yfr6a77m5qq.vercel.run/'+$asset.name) -OutFile $file -TimeoutSec 180
+            $available=$false
+            foreach($base in @('https://sb-2yfr6a77m5qq.vercel.run/','https://github.com/yLordzy/ZyroVersions/releases/download/v1.2.7-beta.1/')){
+              try{Invoke-WebRequest ($base+$asset.name) -OutFile $file -TimeoutSec 180;$available=$true;break}catch{Write-Host 'Checking the next official location.'}
+            }
+            if(-not $available){throw 'Update asset unavailable.'}
             if((Get-FileHash $file).Hash.ToLowerInvariant() -ne $asset.sha){throw 'Update asset SHA-256 mismatch.'}
           }
           $old=Join-Path $work 'ZyroFools-Setup-1.2.6.exe'
@@ -67,7 +71,7 @@ jobs:
           if(-not $launcher.WaitForExit(60000)){throw 'Update launcher timeout.'}
           $applied=$false
           for($i=0;$i -lt 360;$i++){
-            if(Test-Path $updateLog){$log=Get-Content $updateLog -Raw;if($log -match 'Atualização aplicada'){$applied=$true;break};if($log -match '\[Apply\] ERRO:'){throw $log}}
+            if(Test-Path $updateLog){$log=Get-Content $updateLog -Raw;if($log -match 'Atualização aplicada'){$applied=$true;break};if($log -match '\[Apply\].* \| '){throw $log}}
             Start-Sleep -Seconds 1
           }
           if(-not $applied){if(Test-Path $updateLog){Get-Content $updateLog};throw 'Signed update did not finish.'}
