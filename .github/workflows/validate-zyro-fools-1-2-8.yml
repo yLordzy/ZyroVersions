@@ -1,0 +1,206 @@
+name: Validate Windows and publish Zyro Fools 1.2.8 beta
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/validate-zyro-fools-1-2-8.yml']
+permissions:
+  contents: read
+jobs:
+  validate-and-publish-beta:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified compiled installers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $work=Join-Path $env:RUNNER_TEMP 'zyro-beta128'
+          New-Item -ItemType Directory -Path $work -Force|Out-Null
+          $beta=Join-Path $work 'ZyroFools-Setup-1.2.8-Beta.exe'
+          $downloaded=$false
+          foreach($url in @('https://sb-5tnuipzhzyft.vercel.run/ZyroFools-Setup-1.2.8-Beta.exe','https://github.com/yLordzy/ZyroVersions/releases/download/v1.2.8-beta.1/ZyroFools-Setup-1.2.8-Beta.exe')) {
+            try {Invoke-WebRequest $url -OutFile $beta -TimeoutSec 180; $downloaded=$true; break} catch {Write-Host 'Candidate download unavailable; checking the next official location.'}
+          }
+          if(-not $downloaded){throw 'Beta installer unavailable.'}
+          if((Get-FileHash $beta).Hash.ToLowerInvariant() -ne '37e50aa6520708f59ef42f56e23185779a78fe6d4422ad3318583936a1d7c92a'){throw 'Beta SHA-256 mismatch.'}
+          foreach($asset in @(@{name='ZyroFools-1.2.8-Update.zip';sha='bdc6e36268749ef38b624552f2f7aaf77086970ab8dc1311e01074f30376449d'},@{name='desktop-v2.json';sha='1bbbaaf63221f2288c8d70afe2039dba9f13bdea69c84ac6a85c475d8d47b55a'})){
+            $file=Join-Path $work $asset.name
+            $available=$false
+            foreach($base in @('https://sb-5tnuipzhzyft.vercel.run/','https://github.com/yLordzy/ZyroVersions/releases/download/v1.2.8-beta.1/')){
+              try{Invoke-WebRequest ($base+$asset.name) -OutFile $file -TimeoutSec 180;$available=$true;break}catch{Write-Host 'Checking the next official location.'}
+            }
+            if(-not $available){throw 'Update asset unavailable.'}
+            if((Get-FileHash $file).Hash.ToLowerInvariant() -ne $asset.sha){throw 'Update asset SHA-256 mismatch.'}
+          }
+          $old=Join-Path $work 'ZyroFools-Setup-1.2.6.exe'
+          Invoke-WebRequest 'https://github.com/yLordzy/ZyroVersions/releases/download/v1.2.6/ZyroFools-Setup-1.2.6.exe' -OutFile $old -TimeoutSec 180
+          if((Get-FileHash $old).Hash.ToLowerInvariant() -ne '4c2e10d6e9b579b82405a39b7d5053bb46f768712c23b4e24c3fbe723c5d6ac5'){throw 'Baseline SHA-256 mismatch.'}
+      - name: Test fresh install and upgrade from 1.2.6
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $work=Join-Path $env:RUNNER_TEMP 'zyro-beta128'
+          $app=Join-Path $env:LOCALAPPDATA 'Programs/ZyroFools'
+          function Install([string]$setup){
+            $p=Start-Process $setup -ArgumentList '/S' -PassThru
+            if(-not $p.WaitForExit(180000)){$p.Kill();throw 'Installer timeout.'}
+            if($p.ExitCode){throw "Installer failed: $($p.ExitCode)"}
+            foreach($name in @('ZyroFools.exe','Updater.exe','resources/app.asar','resources/core/Zyro.CoreHost.exe','resources/zyro-updater/Updater.exe')){if(-not(Test-Path (Join-Path $app $name))){throw "Missing $name"}}
+            $p=Start-Process (Join-Path $app 'Updater.exe') -ArgumentList @('-Action','Confirm','-Target',('"'+$app+'"'),'-Headless') -PassThru
+            if(-not $p.WaitForExit(60000)){throw 'Confirmation launcher timeout.'}
+            $pending=Join-Path $env:LOCALAPPDATA 'ZyroFools/Installer/pending.json'
+            for($i=0;$i -lt 120 -and (Test-Path $pending);$i++){Start-Sleep -Milliseconds 500}
+            if(Test-Path $pending){throw 'Installation confirmation did not clear pending backup.'}
+          }
+          Install (Join-Path $work 'ZyroFools-Setup-1.2.6.exe')
+          Set-Content (Join-Path $app 'customer-preserved.txt') 'customer-data-preserved'
+          # Apply the signed patch with the updater already installed by 1.2.6.
+          $updateWork=Join-Path $env:LOCALAPPDATA 'ZyroFools/Updater'
+          $updateLog=Join-Path $updateWork 'update.log'
+          if(Test-Path $updateLog){Remove-Item $updateLog -Force}
+          $env:ELECTRON_RUN_AS_NODE='1'
+          $panel=Start-Process (Join-Path $app 'ZyroFools.exe') -ArgumentList @('-e','"setInterval(()=>{},1000)"') -PassThru
+          Remove-Item Env:ELECTRON_RUN_AS_NODE
+          Start-Sleep -Seconds 2
+          if($panel.HasExited){throw 'Panel process fixture failed to start.'}
+          $patch=Join-Path $work 'ZyroFools-1.2.8-Update.zip';$envelope=Join-Path $work 'desktop-v2.json'
+          $launcher=Start-Process (Join-Path $app 'resources/zyro-updater/Updater.exe') -ArgumentList @('-Action','Apply','-Archive',('"'+$patch+'"'),'-Envelope',('"'+$envelope+'"'),'-Target',('"'+$app+'"'),'-Headless','-NoRestart') -PassThru
+          if(-not $launcher.WaitForExit(60000)){throw 'Update launcher timeout.'}
+          $applied=$false
+          for($i=0;$i -lt 360;$i++){
+            if(Test-Path $updateLog){$log=Get-Content $updateLog -Raw;if($log -match 'Atualização aplicada'){$applied=$true;break};if($log -match '\[Apply\].* \| '){throw $log}}
+            Start-Sleep -Seconds 1
+          }
+          if(-not $applied){if(Test-Path $updateLog){Get-Content $updateLog};throw 'Signed update did not finish.'}
+          $panel.Refresh();if(-not $panel.HasExited){throw 'Updater did not close the owned panel process.'}
+          $confirm=Start-Process (Join-Path $app 'resources/zyro-updater/Updater.exe') -ArgumentList @('-Action','Confirm','-Target',('"'+$app+'"'),'-Headless') -PassThru
+          if(-not $confirm.WaitForExit(60000)){throw 'Patch confirmation launcher timeout.'}
+          $pendingPatch=Join-Path $updateWork 'pending.json'
+          for($i=0;$i -lt 120 -and (Test-Path $pendingPatch);$i++){Start-Sleep -Milliseconds 500}
+          if(Test-Path $pendingPatch){Get-Content $updateLog;throw 'Signed patch confirmation incomplete.'}
+          foreach($name in @('rollback','stage')){if(Test-Path (Join-Path $updateWork $name)){throw 'Confirmed patch left temporary files.'}}
+          $updated=Get-Content (Join-Path $app 'resources/install-payload.json') -Raw|ConvertFrom-Json
+          if($updated.version -ne '1.2.8'){throw 'Patch did not update the install inventory.'}
+          if((Get-Content (Join-Path $app 'customer-preserved.txt')) -ne 'customer-data-preserved'){throw 'Patch changed a customer file.'}
+          Write-Host 'PASS: original signing key, native patch updater, panel closure, confirmation and temporary-file cleanup.'
+          Install (Join-Path $work 'ZyroFools-Setup-1.2.8-Beta.exe')
+          if((Get-Content (Join-Path $app 'customer-preserved.txt')) -ne 'customer-data-preserved'){throw 'Upgrade changed a customer file.'}
+          $inventory=Get-Content (Join-Path $app 'resources/install-payload.json') -Raw|ConvertFrom-Json
+          if(@($inventory.files|Where-Object {$_.path -match '\.pdb$'}).Count){throw 'Debug symbols shipped in new payload.'}
+          if(-not(Test-Path (Join-Path $app 'resources/core/licenses/CloudRedirect-LICENSE.txt'))){throw 'Third-party notices missing.'}
+          Install (Join-Path $work 'ZyroFools-Setup-1.2.8-Beta.exe')
+          Write-Host 'PASS: baseline install, beta upgrade, repeat install, customer file preservation, confirmation and notices.'
+      - name: Test the actual Windows core and scoped integration removal
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $work=Join-Path $env:RUNNER_TEMP 'zyro-beta128'
+          $app=Join-Path $env:LOCALAPPDATA 'Programs/ZyroFools'
+          $steam=Join-Path $work 'SteamFixture';$profile=Join-Path $work 'CoreProfile'
+          foreach($folder in @($steam,$profile,(Join-Path $steam 'steamapps'),(Join-Path $steam 'config/stplug-in'),(Join-Path $steam 'userdata/123/570/remote'))){New-Item -ItemType Directory -Force -Path $folder|Out-Null}
+          Copy-Item (Join-Path $app 'resources/core/Zyro.CoreHost.exe') (Join-Path $steam 'steam.exe')
+          Set-Content (Join-Path $steam 'GreenTools.dll') 'MZ integration fixture GreenTools'
+          Set-Content (Join-Path $steam 'greentools.toml') 'fixture=true'
+          Set-Content (Join-Path $steam 'config/stplug-in/570.lua') '-- integration fixture'
+          Set-Content (Join-Path $steam 'steamapps/appmanifest_570.acf') 'official-file'
+          Set-Content (Join-Path $steam 'userdata/123/570/remote/save.dat') 'save-preserved'
+          Set-Content (Join-Path $steam 'version.dll') 'MZ unrelated-overlay-preserved'
+          # The disposable test profile starts with automatic maintenance disabled.
+          Set-Content (Join-Path $profile 'zyro-integrations-disabled.json') '{"disabled":true}'
+          $psi=[Diagnostics.ProcessStartInfo]::new()
+          $psi.FileName=Join-Path $app 'resources/core/Zyro.CoreHost.exe'
+          $psi.UseShellExecute=$false;$psi.CreateNoWindow=$true
+          $psi.RedirectStandardInput=$true;$psi.RedirectStandardOutput=$true;$psi.RedirectStandardError=$true
+          $psi.Environment['DOLINTOOLS_DATA_PATH']=$profile;$psi.Environment['ZYRO_STEAM_PATH']=$steam
+          $p=[Diagnostics.Process]::new();$p.StartInfo=$psi
+          if(-not $p.Start()){throw 'Cannot start core.'}
+          $stderr=$p.StandardError.ReadToEndAsync()
+          function Read-Wire {
+            $line=$p.StandardOutput.ReadLineAsync().WaitAsync([TimeSpan]::FromSeconds(45)).GetAwaiter().GetResult()
+            if(-not $line){throw 'Core closed its output.'}
+            return $line|ConvertFrom-Json
+          }
+          function Request-Core([string]$action,[hashtable]$payload=@{}){
+            $id=[Guid]::NewGuid().ToString('N')
+            $p.StandardInput.WriteLine((@{id=$id;action=$action;args=$payload}|ConvertTo-Json -Depth 20 -Compress))
+            do{$reply=Read-Wire}until($reply.id -eq $id)
+            if(-not $reply.ok){throw $reply.error}
+            return $reply.result
+          }
+          try{
+            $ready=Read-Wire
+            if($ready.eventType -ne 'ready' -or $ready.version -ne '1.2.8'){throw 'Unexpected Windows core startup.'}
+            $ping=Request-Core 'ping'
+            if($ping.platform -ne 'Win32NT'){throw 'Core did not run on Windows.'}
+            $schema=@(Request-Core 'schema')
+            if($schema.Count -lt 173){throw 'Expected operations missing.'}
+            foreach($name in @('Cloud.GetStatusAsync:0','CloudAccess.AuthorizeAsync:0','Usage.GetAsync:0','IntegrationRemoval.RemoveAsync:0')){if($name -notin $schema.id){throw "Missing operation $name"}}
+            $preview=Request-Core 'IntegrationRemoval.PreviewAsync:0'
+            if($preview.Files.Count -lt 3){throw 'Integration files not detected.'}
+            $removed=Request-Core 'IntegrationRemoval.RemoveAsync:0' @{confirmationToken=$preview.confirmationToken}
+            if($removed.remaining.Count -ne 0 -or $removed.removed -lt 3){throw 'Incomplete fixture cleanup.'}
+            foreach($name in @('GreenTools.dll','greentools.toml','config/stplug-in/570.lua')){if(Test-Path (Join-Path $steam $name)){throw "Integration file left behind: $name"}}
+            foreach($name in @('steam.exe','steamapps/appmanifest_570.acf','userdata/123/570/remote/save.dat','version.dll')){if(-not(Test-Path (Join-Path $steam $name))){throw "Protected file removed: $name"}}
+            $settings=Request-Core 'Data.LoadSettingsAsync:0'
+            if($settings.autoInjectSkyTools){throw 'Automatic injection not disabled.'}
+            $report=@{version='1.2.8';channel='beta';windows=$true;baselineFreshInstall=$true;signedNativeUpdateFrom126=$true;panelClosure=$true;patchTemporaryFilesCleaned=$true;upgradeFrom126=$true;repeatInstall=$true;customerFilesPreserved=$true;coreOperations=$schema.Count;scopedIntegrationRemoval=$true;realSteamInjection='not tested';realCloudProviders='not tested';stableChannelChanged=$false}
+            $report|ConvertTo-Json|Set-Content (Join-Path $work 'windows-validation-1.2.8.json')
+            Write-Host 'PASS: Windows core, operations and removal; official files, saves and unidentified DLL preserved.'
+          } finally {
+            $p.StandardInput.Close()
+            if(-not $p.WaitForExit(15000)){$p.Kill($true)}
+            $log=$stderr.GetAwaiter().GetResult()
+            if($log){Write-Host $log}
+          }
+      - name: Verify real plugin installation, cache repair and restart persistence
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $work=Join-Path $env:RUNNER_TEMP 'zyro-beta128'
+          $script=@'
+          const fs=require('fs'),path=require('path'),cp=require('child_process'),rl=require('readline'),assert=require('assert/strict');
+          const app=path.join(process.env.LOCALAPPDATA,'Programs/ZyroFools'),work=path.join(process.env.RUNNER_TEMP,'zyro-beta128');
+          const steam=path.join(work,'PluginSteam'),profile=path.join(work,'PluginProfile'),core=path.join(app,'resources/core/Zyro.CoreHost.exe');
+          for(const d of [steam,profile,path.join(steam,'userdata/123'),path.join(steam,'millennium/config'),path.join(steam,'millennium/plugins/other')])fs.mkdirSync(d,{recursive:true});
+          fs.copyFileSync(core,path.join(steam,'steam.exe'));fs.writeFileSync(path.join(steam,'userdata/123/save.dat'),'keep-save');fs.writeFileSync(path.join(steam,'millennium/plugins/other/plugin.json'),'keep-other-plugin');
+          fs.writeFileSync(path.join(steam,'millennium/config/config.json'),JSON.stringify({custom:123,plugins:{enabledPlugins:['other-plugin']}}));
+          fs.writeFileSync(path.join(profile,'zyro-integrations-disabled.json'),'{"disabled":true}');
+          let child,lines;const pending=new Map();let ready;
+          async function start(){let resolveReady;ready=new Promise(r=>resolveReady=r);child=cp.spawn(core,[],{env:{...process.env,DOLINTOOLS_DATA_PATH:profile,ZYRO_STEAM_PATH:steam},windowsHide:true,stdio:['pipe','pipe','pipe']});child.stderr.on('data',b=>process.stderr.write(b));lines=rl.createInterface({input:child.stdout});lines.on('line',line=>{const m=JSON.parse(line);if(m.eventType==='ready')resolveReady(m);if(m.id&&pending.has(m.id)){const p=pending.get(m.id);pending.delete(m.id);clearTimeout(p.timer);m.ok?p.resolve(m.result):p.reject(Error(m.error));}});await Promise.race([ready,new Promise((_,r)=>setTimeout(()=>r(Error('Core startup timeout')),45000).unref())]);}
+          function call(action){return new Promise((resolve,reject)=>{const id=Math.random().toString(36);const timer=setTimeout(()=>reject(Error('RPC timeout '+action)),60000);pending.set(id,{resolve,reject,timer});child.stdin.write(JSON.stringify({id,action,args:{}})+'\n');});}
+          async function stop(){const exit=new Promise(r=>child.once('exit',r));child.stdin.end();await exit;lines.close();}
+          const plugin=path.join(steam,'millennium/plugins/SkyTools.Plugin');
+          function verify(){const m=JSON.parse(fs.readFileSync(path.join(plugin,'plugin.json')));assert.equal(m.common_name,'Zyro Fools Plugin 1.2.8');for(const f of [path.join(plugin,'public/skytools.js'),path.join(plugin,'webkit/SkyTools/skytools.js'),path.join(plugin,'.millennium/Dist/index.js'),path.join(plugin,'.millennium/Dist/webkit.js'),path.join(steam,'steamui/webkit/SkyTools/skytools.js')])assert.ok(fs.readFileSync(f,'utf8').includes('zyro-fools-millennium-1.2.8'),'Stale frontend '+f);const lua=fs.readFileSync(path.join(plugin,'backend/main.lua'),'utf8');assert.ok(lua.includes('Atualizações gerenciadas pelo painel Zyro Fools.'));assert.ok(!lua.includes('Remove-SkyToolsTree $TargetPluginRoot'));assert.equal(fs.readFileSync(path.join(steam,'userdata/123/save.dat'),'utf8'),'keep-save');assert.equal(fs.readFileSync(path.join(steam,'millennium/plugins/other/plugin.json'),'utf8'),'keep-other-plugin');const c=JSON.parse(fs.readFileSync(path.join(steam,'millennium/config/config.json')));assert.equal(c.custom,123);assert.ok(c.plugins.enabledPlugins.includes('other-plugin'));assert.ok(c.plugins.enabledPlugins.includes('skytools-plugin'));}
+          (async()=>{await start();const installed=await call('Plugin.InstallOrRepairAsync:0');assert.equal(installed.installed,true);verify();fs.writeFileSync(path.join(plugin,'data/settings.json'),'keep-customer-settings');fs.writeFileSync(path.join(plugin,'public/skytools.js'),'reverted SkyTools frontend');fs.writeFileSync(path.join(steam,'steamui/webkit/SkyTools/skytools.js'),'stale cache');await call('Plugin.ClearCacheAsync:0');verify();assert.equal(fs.readFileSync(path.join(plugin,'data/settings.json'),'utf8'),'keep-customer-settings');await stop();fs.writeFileSync(path.join(plugin,'.millennium/Dist/index.js'),'reverted cached UI');await start();verify();await stop();fs.writeFileSync(path.join(work,'plugin-validation-1.2.8.json'),JSON.stringify({installedButtonRoute:true,offlinePackages:true,publicAndWebkit:true,compiledModulesAndSteamUiCache:true,clearCacheRepair:true,restartPersistence:true,settingsSavesAndOtherPluginsPreserved:true,originalSelfUpdaterDisabled:true,liveSteam:'not tested'}));console.log('PASS: actual Windows button route, installed files, offline repair, cache mirrors, restart persistence and customer data preservation.');})().catch(e=>{console.error(e);if(child)child.kill();process.exitCode=1;});
+          '@
+          $file=Join-Path $work 'plugin-test.cjs';$script|Set-Content $file
+          node $file
+          if($LASTEXITCODE){throw 'Windows installed-plugin validation failed.'}
+      - name: Publish compiled beta only; preserve stable updater channel
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $repo='yLordzy/ZyroVersions';$tag='v1.2.8-beta.1'
+          $work=Join-Path $env:RUNNER_TEMP 'zyro-beta128'
+          $notes=@'
+          Zyro Fools 1.2.8 beta — identidade e reparo do plugin Steam.
+
+          - Instalar/reparar usa pacote local Zyro Fools, com instalação offline e verificação de integridade.
+          - Corrige public/webkit, módulos compilados e caches SteamUI; mantém identidade após reparar e reiniciar.
+          - Textos visíveis com identidade Zyro Fools; protocolos internos preservados. Updater original do plugin substituído pelo gerenciamento do Zyro Fools.
+          - Validação automatizada Windows: instalação, atualização 1.2.6, reinstalação, preservação de dados, host e remoção em pasta de testes.
+          - Updater nativo: patch assinado com a chave original, encerramento do painel e limpeza após confirmação.
+
+          Pré-lançamento para beta testers. Injeção em Steam real e provedores reais ainda precisam de teste. O canal online aceita beta e será sincronizado após a validação. Somente binários e relatório são distribuídos; fonte privado não incluído.
+          '@
+          $notes|Set-Content (Join-Path $work 'beta-notes.md')
+          gh release view $tag --repo $repo 2>$null|Out-Null
+          if($LASTEXITCODE){gh release create $tag --repo $repo --prerelease --latest=false --title 'Zyro Fools 1.2.8 Beta 1' --notes-file (Join-Path $work 'beta-notes.md')}
+          if($LASTEXITCODE){throw 'Beta release creation failed.'}
+          gh release upload $tag (Join-Path $work 'ZyroFools-Setup-1.2.8-Beta.exe') (Join-Path $work 'windows-validation-1.2.8.json') (Join-Path $work 'plugin-validation-1.2.8.json') (Join-Path $work 'ZyroFools-1.2.8-Update.zip') (Join-Path $work 'desktop-v2.json') --repo $repo --clobber
+          if($LASTEXITCODE){throw 'Beta upload failed.'}
