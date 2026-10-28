@@ -1,0 +1,118 @@
+name: Enable signed beta updates for installed Zyro Fools
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/signed-beta-channel.yml']
+  release:
+    types: [published]
+  workflow_run:
+    workflows: ['Validate Windows and publish Zyro Fools 1.2.7 beta']
+    types: [completed]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: zyro-signed-update-channel
+  cancel-in-progress: false
+jobs:
+  sync:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: windows-2025
+    timeout-minutes: 12
+    permissions:
+      contents: write
+    steps:
+      - name: Select and authenticate the newest stable or beta package
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $work=Join-Path $env:RUNNER_TEMP 'zyro-signed-channel'
+          New-Item -ItemType Directory -Force $work|Out-Null
+          $script=@'
+          const fs=require('fs'),path=require('path'),crypto=require('crypto');
+          const repo='yLordzy/ZyroVersions';
+          const key='-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAyMP1hZVaMrnrXFGrpoScCSnH4NmCDT6JTKveaJsGmn4=\n-----END PUBLIC KEY-----';
+          const headers={Authorization:'Bearer '+process.env.GH_TOKEN,Accept:'application/vnd.github+json'};
+          async function get(url,api=false){const r=await fetch(url,{headers:api?headers:{}});if(!r.ok)throw Error('HTTP '+r.status);return r;}
+          function compare(a,b){const x=a.split('.').map(Number),y=b.split('.').map(Number);for(let i=0;i<4;i++){const d=(x[i]||0)-(y[i]||0);if(d)return d;}return 0;}
+          (async()=>{
+            const releases=await(await get('https://api.github.com/repos/'+repo+'/releases?per_page=100',true)).json();
+            const latest=await(await get('https://api.github.com/repos/'+repo+'/releases/latest',true)).json();
+            const found=[];
+            for(const release of releases.filter(r=>!r.draft)){
+              const asset=release.assets.find(a=>a.name==='desktop-v2.json');if(!asset)continue;
+              try{
+                const raw=Buffer.from(await(await get(asset.browser_download_url)).arrayBuffer());if(raw.length>65536)throw Error('Oversized metadata');
+                const e=JSON.parse(raw),bytes=Buffer.from(e.payload,'base64');
+                if(!crypto.verify(null,bytes,key,Buffer.from(e.signature,'base64')))throw Error('Signature rejected');
+                const m=JSON.parse(bytes);
+                if(m.schema!==2||m.kind!=='app-patch'||m.platform!=='win32-x64'||!/^\d+\.\d+\.\d+(?:\.\d+)?$/.test(m.version)||!Number.isSafeInteger(m.size)||m.size<1||m.size>512*1024*1024||!/^[a-f0-9]{64}$/.test(m.sha256))throw Error('Invalid package');
+                const archive=release.assets.find(a=>a.browser_download_url===m.url);
+                if(!archive||archive.size!==m.size||!archive.name.endsWith('-Update.zip'))throw Error('Signed archive missing from release');
+                if(archive.digest&&archive.digest!=='sha256:'+m.sha256)throw Error('Archive digest mismatch');
+                found.push({raw,m,tag:release.tag_name,published:release.published_at});
+              }catch(e){console.log('Skipped '+release.tag_name+': '+e.message);}
+            }
+            found.sort((a,b)=>compare(b.m.version,a.m.version)||b.published.localeCompare(a.published));
+            if(!found.length)throw Error('No authenticated release found');
+            const candidate=found[0],file=path.join(process.env.RUNNER_TEMP,'zyro-signed-channel','desktop-v2.json');
+            fs.writeFileSync(file,candidate.raw);
+            const stableAsset=latest.assets.find(a=>a.name==='desktop-v2.json');if(!stableAsset)throw Error('Existing channel metadata missing');
+            fs.writeFileSync(path.join(path.dirname(file),'previous-desktop-v2.json'),Buffer.from(await(await get(stableAsset.browser_download_url)).arrayBuffer()));
+            fs.writeFileSync(path.join(path.dirname(file),'candidate.json'),JSON.stringify({version:candidate.m.version,tag:candidate.tag,latestTag:latest.tag_name}));
+            console.log('Authenticated candidate '+candidate.m.version+' from '+candidate.tag+'; existing installed updater endpoint retained.');
+          })().catch(e=>{console.error(e.message);process.exitCode=1});
+          '@
+          $script|Set-Content (Join-Path $work 'select.cjs')
+          node (Join-Path $work 'select.cjs')
+          if($LASTEXITCODE){throw 'Signed release selection failed.'}
+      - name: Publish the authenticated channel and verify the installed updater online
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference='Stop'
+          $ProgressPreference='SilentlyContinue'
+          $repo='yLordzy/ZyroVersions'
+          $work=Join-Path $env:RUNNER_TEMP 'zyro-signed-channel'
+          $candidate=Get-Content (Join-Path $work 'candidate.json') -Raw|ConvertFrom-Json
+          $setup=Join-Path $work 'baseline.exe'
+          Invoke-WebRequest 'https://github.com/yLordzy/ZyroVersions/releases/download/v1.2.6/ZyroFools-Setup-1.2.6.exe' -OutFile $setup
+          if((Get-FileHash $setup).Hash.ToLowerInvariant() -ne '4c2e10d6e9b579b82405a39b7d5053bb46f768712c23b4e24c3fbe723c5d6ac5'){throw 'Baseline integrity failure.'}
+          $p=Start-Process $setup -ArgumentList '/S' -PassThru
+          if(-not $p.WaitForExit(180000) -or $p.ExitCode){throw 'Baseline installation failed.'}
+          $app=Join-Path $env:LOCALAPPDATA 'Programs/ZyroFools'
+          $test=@'
+          const fs=require('fs'),path=require('path'),os=require('os');
+          const app=path.join(process.env.LOCALAPPDATA,'Programs','ZyroFools','resources','app.asar');
+          const {Updater}=require(path.join(app,'updater-core.js'));
+          const config=require(path.join(app,'update-config.json'));
+          (async()=>{const cache=fs.mkdtempSync(path.join(os.tmpdir(),'zyro-beta-online-'));try{
+            const u=new Updater({config,current:'1.2.6',cache,onState:s=>console.log(s.status)});
+            for(let attempt=0;attempt<12;attempt++){await u.check();if(u.state.status==='ready')break;await new Promise(r=>setTimeout(r,10000));}
+            if(u.state.status!=='ready'||u.state.version!==process.env.ZYRO_EXPECTED_VERSION)throw Error(JSON.stringify(u.state));
+            fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'zyro-signed-channel','online-pass.json'),JSON.stringify({version:u.state.version,status:u.state.status,installedUpdater:true,signatureVerified:true}));
+            console.log('PASS: existing installed updater finds, downloads and authenticates beta online.');
+          }finally{fs.rmSync(cache,{recursive:true,force:true});}})().catch(e=>{console.error(e);process.exitCode=1});
+          '@
+          $test|Set-Content (Join-Path $work 'online.cjs')
+          gh release upload $candidate.latestTag (Join-Path $work 'desktop-v2.json') --repo $repo --clobber
+          if($LASTEXITCODE){throw 'Channel publication failed.'}
+          try{
+            $env:ELECTRON_RUN_AS_NODE='1'
+            $env:ZYRO_EXPECTED_VERSION=$candidate.version
+            $p=Start-Process (Join-Path $app 'ZyroFools.exe') -ArgumentList ('"'+(Join-Path $work 'online.cjs')+'"') -PassThru -RedirectStandardOutput (Join-Path $work 'online.stdout') -RedirectStandardError (Join-Path $work 'online.stderr')
+            if(-not $p.WaitForExit(240000)){$p.Kill();throw 'Online verification timeout.'}
+            Get-Content (Join-Path $work 'online.stdout')
+            Get-Content (Join-Path $work 'online.stderr')
+            if($p.ExitCode -or -not(Test-Path (Join-Path $work 'online-pass.json'))){throw 'Installed updater verification failed.'}
+            gh release upload $candidate.tag (Join-Path $work 'online-pass.json') --repo $repo --clobber
+            if($LASTEXITCODE){throw 'Validation report upload failed.'}
+          }catch{
+            Copy-Item (Join-Path $work 'previous-desktop-v2.json') (Join-Path $work 'desktop-v2.json') -Force
+            gh release upload $candidate.latestTag (Join-Path $work 'desktop-v2.json') --repo $repo --clobber
+            throw
+          }
