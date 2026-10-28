@@ -1,0 +1,116 @@
+name: Test Zyro notice on Windows
+on:
+  push:
+    paths:
+      - .github/workflows/test-greentools-notice.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  notice:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Validate exact experimental bytes and native dialog
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'zyro-notice-test'
+          New-Item -ItemType Directory -Path $root -Force | Out-Null
+          $original = Join-Path $root 'original.dll'
+          $candidate = Join-Path $root 'GreenTools.dll'
+          Invoke-WebRequest 'https://github.com/MalucoPlayGamer/GreenTools/releases/download/v1.0.6/GreenTools.dll' -OutFile $original
+          if ((Get-FileHash $original -Algorithm SHA256).Hash.ToLowerInvariant() -ne '52141827fcd593207313aa0b6b03d524f89571088bfa41220707ef2d360b689d') { throw 'Original DLL hash mismatch' }
+          $bytes = [IO.File]::ReadAllBytes($original)
+          $changes = @(
+            @{ Offset = 0x1411f8; Old = 'GreenTools Updated!'; New = 'Zyro Fools'; Width = 19 },
+            @{ Offset = 0x1411d0; Old = "`n`nRestart Steam now to apply?"; New = "`n`nReiniciar a Steam agora?"; Width = 29 }
+          )
+          foreach ($change in $changes) {
+            if ([Text.Encoding]::ASCII.GetString($bytes, $change.Offset, $change.Width) -cne $change.Old) { throw 'Unexpected data layout' }
+            $replacement = [Text.Encoding]::ASCII.GetBytes($change.New.PadRight($change.Width, ' '))
+            [Array]::Copy($replacement, 0, $bytes, $change.Offset, $change.Width)
+          }
+          [IO.File]::WriteAllBytes($candidate, $bytes)
+          $hash = (Get-FileHash $candidate -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne '9920cd6b4e946adda53990cb0f402139813783692d071fb6c942f004f9294182') { throw 'Candidate differs from the delivered experimental DLL' }
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Collections.Generic;
+          using System.Runtime.InteropServices;
+          using System.Text;
+          using System.Threading;
+          public static class ZyroNoticeTest {
+            [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+            static extern IntPtr LoadLibraryEx(string file, IntPtr handle, uint flags);
+            [DllImport("kernel32.dll")] static extern bool FreeLibrary(IntPtr handle);
+            [DllImport("user32.dll", CharSet=CharSet.Ansi)] static extern int MessageBoxA(IntPtr owner, string text, string title, uint flags);
+            [DllImport("user32.dll", CharSet=CharSet.Ansi)] static extern IntPtr FindWindowA(string className, string title);
+            [DllImport("user32.dll")] static extern IntPtr GetDlgItem(IntPtr window, int id);
+            [DllImport("user32.dll")] static extern bool PostMessage(IntPtr window, uint message, IntPtr w, IntPtr l);
+            [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr window, StringBuilder text, int count);
+            delegate bool EnumProc(IntPtr window, IntPtr parameter);
+            [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumProc callback, IntPtr parameter);
+            public static void MapAsData(string file) {
+              // Data/resource mapping deliberately does not call DllMain or resolve integration code.
+              IntPtr module=LoadLibraryEx(file, IntPtr.Zero, 0x40 | 0x20);
+              if(module==IntPtr.Zero) throw new Exception("Windows data mapping failed: "+Marshal.GetLastWin32Error());
+              FreeLibrary(module);
+            }
+            public static int ShowAndChoose(string title, string body, int choice) {
+              int result=0;
+              var thread=new Thread(()=>{result=MessageBoxA(IntPtr.Zero, body, title, 0x40044);});
+              thread.IsBackground=true;thread.SetApartmentState(ApartmentState.STA);thread.Start();
+              IntPtr dialog=IntPtr.Zero;
+              try {
+                for(int i=0;i<200;i++) {
+                  dialog=FindWindowA("#32770",title);
+                  if(dialog!=IntPtr.Zero) break;
+                  Thread.Sleep(50);
+                }
+                if(dialog==IntPtr.Zero) throw new Exception("Native dialog was not found on this Windows desktop");
+                var visible=new List<string>();
+                EnumChildWindows(dialog,(window,param)=>{var text=new StringBuilder(4096);GetWindowText(window,text,text.Capacity);visible.Add(text.ToString());return true;},IntPtr.Zero);
+                if(!visible.Contains(body)) throw new Exception("Displayed message text differs from DLL text");
+                if(GetDlgItem(dialog,6)==IntPtr.Zero || GetDlgItem(dialog,7)==IntPtr.Zero) throw new Exception("Yes/No controls missing");
+                PostMessage(GetDlgItem(dialog,choice),0x00F5,IntPtr.Zero,IntPtr.Zero);
+                if(!thread.Join(5000)) throw new Exception("Native dialog did not return after button click");
+                if(result!=choice) throw new Exception("Wrong native dialog result: "+result);
+                return result;
+              } finally {
+                if(thread.IsAlive && dialog!=IntPtr.Zero) {PostMessage(dialog,0x0010,IntPtr.Zero,IntPtr.Zero);thread.Join(2000);}
+              }
+            }
+          }
+          '@
+          [ZyroNoticeTest]::MapAsData($candidate)
+          $title = [Text.Encoding]::ASCII.GetString($bytes, 0x1411f8, 19)
+          $suffix = [Text.Encoding]::ASCII.GetString($bytes, 0x1411d0, 29)
+          $body = 'v1.0.5 -> v1.0.6' + $suffix
+          $yes = [ZyroNoticeTest]::ShowAndChoose($title, $body, 6)
+          $no = [ZyroNoticeTest]::ShowAndChoose($title, $body, 7)
+          $report = [ordered]@{
+            status = 'passed'
+            os = [Environment]::OSVersion.VersionString
+            candidateSha256 = $hash
+            exactDeliveredBytes = $true
+            windowsResourceDataMapping = $true
+            displayedTitle = $title.TrimEnd()
+            displayedMessage = $body.TrimEnd()
+            yesButtonReturn = $yes
+            noButtonReturn = $no
+            dllCodeExecuted = $false
+            steamIntegrationTested = $false
+            actualUpdaterExecutionTested = $false
+            signatureValid = $false
+            customRedBlackThemeImplemented = $false
+            note = 'Native MessageBox reproduction with exact DLL texts; not execution of the DLL or its updater inside Steam.'
+          }
+          $report | ConvertTo-Json | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'zyro-notice-windows.json')
+      - name: Save validation report only
+        uses: actions/upload-artifact@v4
+        with:
+          name: zyro-notice-windows-report
+          path: ${{ runner.temp }}/zyro-notice-windows.json
+          if-no-files-found: error
+          retention-days: 14
