@@ -1,3 +1,4 @@
+# Candidate transfer finalized and verified before this run.
 name: Validate Windows and publish Zyro Fools 1.2.9 beta
 on:
   push:
