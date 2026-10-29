@@ -69,21 +69,23 @@ jobs:
           $patch=Join-Path $work 'ZyroFools-1.2.9-Update.zip';$envelope=Join-Path $work 'desktop-v2.json'
           $launcher=Start-Process (Join-Path $app 'resources/zyro-updater/Updater.exe') -ArgumentList @('-Action','Apply','-Archive',('"'+$patch+'"'),'-Envelope',('"'+$envelope+'"'),'-Target',('"'+$app+'"'),'-Headless','-NoRestart') -PassThru
           if(-not $launcher.WaitForExit(60000)){throw 'Update launcher timeout.'}
+          function Read-SharedLog([string]$file){$stream=[IO.File]::Open($file,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete));$reader=[IO.StreamReader]::new($stream);try{return $reader.ReadToEnd()}finally{$reader.Dispose()}}
           $observed=@{}
           $applied=$false
           for($i=0;$i -lt 360;$i++){
             foreach($pr in @(Get-Process powershell,Updater* -ErrorAction SilentlyContinue)){if(-not $observed.ContainsKey($pr.Id)){$null=$pr.Handle;$observed[$pr.Id]=$pr}}
+
+            if(Test-Path $updateLog){$log=Read-SharedLog $updateLog;if($log -match 'Atualização aplicada'){$applied=$true;break};if($log -match '\[Apply\].* \| '){throw $log}}
             if($i -gt 20 -and $observed.Count -gt 0 -and @($observed.Values|Where-Object {-not $_.HasExited}).Count -eq 0){Write-Host 'Observed updater processes have exited.';foreach($pr in $observed.Values){Write-Host ($pr.ProcessName+' exit=0x'+$pr.ExitCode.ToString('X8'))};break}
-            if(Test-Path $updateLog){$log=Get-Content $updateLog -Raw;if($log -match 'Atualização aplicada'){$applied=$true;break};if($log -match '\[Apply\].* \| '){throw $log}}
             if(($i % 30) -eq 0){
               Write-Host ('Apply progress at second '+$i)
-              if(Test-Path $updateLog){Get-Content $updateLog -Tail 2}
+              if(Test-Path $updateLog){(Read-SharedLog $updateLog) -split "`n"|Select-Object -Last 2}
               Get-Process powershell,Updater* -ErrorAction SilentlyContinue|Select-Object Id,ProcessName,CPU,WorkingSet64,Handles|Format-Table|Out-String|Write-Host
             }
             Start-Sleep -Seconds 1
           }
           if(-not $applied){
-            if(Test-Path $updateLog){Get-Content $updateLog -Tail 20}
+            if(Test-Path $updateLog){(Read-SharedLog $updateLog) -split "`n"|Select-Object -Last 20}
             Get-Process powershell,Updater* -ErrorAction SilentlyContinue|Select-Object Id,ProcessName,CPU,WorkingSet64,Handles|Format-Table|Out-String|Write-Host
             Get-WinEvent -FilterHashtable @{LogName='Application';StartTime=(Get-Date).AddMinutes(-15)} -ErrorAction SilentlyContinue|Where-Object {$_.ProviderName -in @('Application Error','Windows Error Reporting','.NET Runtime')}|Select-Object -First 10 TimeCreated,ProviderName,Message|Format-List|Out-String|Write-Host
             $journal=Join-Path $updateWork 'pending.json';if(Test-Path $journal){$j=Get-Content $journal -Raw|ConvertFrom-Json;$matched=0;foreach($f in $j.files){$p=Join-Path $app $f.path;if((Test-Path $p) -and (Get-FileHash $p).Hash -ieq $f.sha256){$matched++}};Write-Host ('Applied hash matches: '+$matched+' / '+$j.files.Count)}
