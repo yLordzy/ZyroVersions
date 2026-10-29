@@ -1,0 +1,21 @@
+name: Stop superseded Zyro Fools 1.2.9 installer qualification
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/cleanup-obsolete-validation129.yml']
+permissions:
+  actions: write
+  contents: read
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Cancel only superseded installer test
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state=$(gh api repos/yLordzy/ZyroVersions/actions/runs/40915676847 --jq .status)
+          if [ "$state" != completed ]; then
+            gh api --method POST repos/yLordzy/ZyroVersions/actions/runs/40915676847/cancel
+          fi
