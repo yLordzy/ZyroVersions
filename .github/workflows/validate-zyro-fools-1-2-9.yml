@@ -19,13 +19,6 @@ jobs:
           $ProgressPreference='SilentlyContinue'
           $work=Join-Path $env:RUNNER_TEMP 'zyro-beta129'
           New-Item -ItemType Directory -Path $work -Force|Out-Null
-          $beta=Join-Path $work 'ZyroFools-Setup-1.2.9-Beta.exe'
-          $downloaded=$false
-          foreach($url in @('https://sb-7cqbo1q2f6q4.vercel.run/8b1f7396fed05bebbe3fbd74cb6dcb74a50cf54164039e98/ZyroFools-Setup-1.2.9-Beta.exe','https://github.com/yLordzy/ZyroVersions/releases/download/v1.2.9-beta.1/ZyroFools-Setup-1.2.9-Beta.exe')) {
-            try {Invoke-WebRequest $url -OutFile $beta -TimeoutSec 180; $downloaded=$true; break} catch {Write-Host 'Candidate download unavailable; checking the next official location.'}
-          }
-          if(-not $downloaded){throw 'Beta installer unavailable.'}
-          if((Get-FileHash $beta).Hash.ToLowerInvariant() -ne 'ae921a5369493f3e276dd84ae25ac34f8911d97b4e17c72e4f02560d1ef1fa0e'){throw 'Beta SHA-256 mismatch.'}
           foreach($asset in @(@{name='ZyroFools-1.2.9-Update.zip';sha='f9b68bce05703e43bd68254e218fe04f4ae35957a94541eb5c0ed4c7f9d7c99c'},@{name='desktop-v2.json';sha='b39f9beb731850956ddb82b0d0f065993dad9f391f2a449c859bdd25663d666f'})){
             $file=Join-Path $work $asset.name
             $available=$false
@@ -107,13 +100,7 @@ jobs:
           foreach($pr in $observed.Values){if(-not $pr.HasExited){if(-not $pr.WaitForExit(60000)){throw 'Updater runner did not exit after confirmation.'}};$pr.Dispose()}
           Start-Sleep -Seconds 2
           Write-Host 'PASS: original signing key, native patch updater, panel closure, confirmation and temporary-file cleanup.'
-          Install (Join-Path $work 'ZyroFools-Setup-1.2.9-Beta.exe')
-          if((Get-Content (Join-Path $app 'customer-preserved.txt')) -ne 'customer-data-preserved'){throw 'Upgrade changed a customer file.'}
-          $inventory=Get-Content (Join-Path $app 'resources/install-payload.json') -Raw|ConvertFrom-Json
-          if(@($inventory.files|Where-Object {$_.path -match '\.pdb$'}).Count){throw 'Debug symbols shipped in new payload.'}
-          if(-not(Test-Path (Join-Path $app 'resources/core/licenses/CloudRedirect-LICENSE.txt'))){throw 'Third-party notices missing.'}
-          Install (Join-Path $work 'ZyroFools-Setup-1.2.9-Beta.exe')
-          Write-Host 'PASS: baseline install, beta upgrade, repeat install, customer file preservation, confirmation and notices.'
+          Write-Host 'PASS: signed updater package; new setup is excluded from this release and not qualified by this run.'
       - name: Test the actual Windows core and scoped integration removal
         shell: pwsh
         run: |
@@ -167,7 +154,7 @@ jobs:
             foreach($name in @('steam.exe','steamapps/appmanifest_570.acf','userdata/123/570/remote/save.dat','version.dll')){if(-not(Test-Path (Join-Path $steam $name))){throw "Protected file removed: $name"}}
             $settings=Request-Core 'Data.LoadSettingsAsync:0'
             if($settings.autoInjectSkyTools){throw 'Automatic injection not disabled.'}
-            $report=@{version='1.2.9';channel='beta';windows=$true;baselineFreshInstall=$true;signedNativeUpdateFrom126=$true;panelClosure=$true;patchTemporaryFilesCleaned=$true;upgradeFrom126=$true;repeatInstall=$true;customerFilesPreserved=$true;coreOperations=$schema.Count;scopedIntegrationRemoval=$true;realSteamInjection='not tested';realCloudProviders='not tested';stableChannelChanged=$false}
+            $report=@{version='1.2.9';channel='beta';windows=$true;baselineFreshInstall=$true;signedNativeUpdateFrom126=$true;panelClosure=$true;patchTemporaryFilesCleaned=$true;upgradeFrom126='signed updater only';repeatInstall='not tested; new setup excluded';customerFilesPreserved=$true;coreOperations=$schema.Count;scopedIntegrationRemoval=$true;realSteamInjection='not tested';realCloudProviders='not tested';stableChannelChanged=$false}
             $report|ConvertTo-Json|Set-Content (Join-Path $work 'windows-validation-1.2.9.json')
             Write-Host 'PASS: Windows core, operations and removal; official files, saves and unidentified DLL preserved.'
           } finally {
@@ -217,7 +204,7 @@ jobs:
           - Instalar/reparar usa pacote local Zyro Fools, com instalação offline e verificação de integridade.
           - Corrige public/webkit, módulos compilados e caches SteamUI; mantém identidade após reparar e reiniciar.
           - Textos visíveis com identidade Zyro Fools; protocolos internos preservados. Updater original do plugin substituído pelo gerenciamento do Zyro Fools.
-          - Validação automatizada Windows: instalação, atualização 1.2.6, reinstalação, preservação de dados, host e remoção em pasta de testes.
+          - Validação Windows: updater assinado da 1.2.6, preservação de dados, confirmação, limpeza e host em pasta de testes. Instalador novo não está incluído nesta entrega.
           - Updater nativo: patch assinado com a chave original, encerramento do painel e limpeza após confirmação.
 
           Pré-lançamento para beta testers. Injeção em Steam real e provedores reais ainda precisam de teste. O canal online aceita beta e será sincronizado após a validação. Somente binários e relatório são distribuídos; fonte privado não incluído.
@@ -226,5 +213,5 @@ jobs:
           gh release view $tag --repo $repo 2>$null|Out-Null
           if($LASTEXITCODE){gh release create $tag --repo $repo --prerelease --latest=false --title 'Zyro Fools 1.2.9 Beta 1' --notes-file (Join-Path $work 'beta-notes.md')}
           if($LASTEXITCODE){throw 'Beta release creation failed.'}
-          gh release upload $tag (Join-Path $work 'ZyroFools-Setup-1.2.9-Beta.exe') (Join-Path $work 'windows-validation-1.2.9.json') (Join-Path $work 'plugin-validation-1.2.9.json') (Join-Path $work 'ZyroFools-1.2.9-Update.zip') (Join-Path $work 'desktop-v2.json') --repo $repo --clobber
+          gh release upload $tag (Join-Path $work 'windows-validation-1.2.9.json') (Join-Path $work 'plugin-validation-1.2.9.json') (Join-Path $work 'ZyroFools-1.2.9-Update.zip') (Join-Path $work 'desktop-v2.json') --repo $repo --clobber
           if($LASTEXITCODE){throw 'Beta upload failed.'}
