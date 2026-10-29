@@ -6,7 +6,7 @@ on:
   release:
     types: [published]
   workflow_run:
-    workflows: ['Validate Windows and publish Zyro Fools 1.2.7 beta', 'Validate Windows and publish Zyro Fools 1.2.8 beta']
+    workflows: ['Validate Windows and publish Zyro Fools 1.2.7 beta', 'Validate Windows and publish Zyro Fools 1.2.8 beta', 'Validate Windows and publish Zyro Fools 1.2.9 beta']
     types: [completed]
   workflow_dispatch:
 permissions:
