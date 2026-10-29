@@ -45,9 +45,10 @@ jobs:
           $work=Join-Path $env:RUNNER_TEMP 'zyro-beta129'
           $app=Join-Path $env:LOCALAPPDATA 'Programs/ZyroFools'
           function Install([string]$setup){
+            for($wait=0;$wait -lt 60;$wait++){try{$existing=[Threading.Mutex]::OpenExisting('Local\ZyroFoolsSetup');$existing.Dispose();if($wait -eq 59){throw 'Previous setup mutex did not clear.'};Start-Sleep -Seconds 1}catch [Threading.WaitHandleCannotBeOpenedException]{break}}
             $p=Start-Process $setup -ArgumentList '/S' -PassThru
             if(-not $p.WaitForExit(180000)){$p.Kill();throw 'Installer timeout.'}
-            if($p.ExitCode){throw "Installer failed: $($p.ExitCode)"}
+            if($p.ExitCode){Get-CimInstance Win32_Process|Where-Object {$_.Name -match 'Zyro|Updater|Setup'}|Select-Object ProcessId,ParentProcessId,Name,ExecutablePath|Format-Table|Out-String|Write-Host;throw "Installer failed: $($p.ExitCode)"}
             foreach($name in @('ZyroFools.exe','Updater.exe','resources/app.asar','resources/core/Zyro.CoreHost.exe','resources/zyro-updater/Updater.exe')){if(-not(Test-Path (Join-Path $app $name))){throw "Missing $name"}}
             $p=Start-Process (Join-Path $app 'Updater.exe') -ArgumentList @('-Action','Confirm','-Target',('"'+$app+'"'),'-Headless') -PassThru
             if(-not $p.WaitForExit(60000)){throw 'Confirmation launcher timeout.'}
@@ -103,6 +104,8 @@ jobs:
           $updated=Get-Content (Join-Path $app 'resources/install-payload.json') -Raw|ConvertFrom-Json
           if($updated.version -ne '1.2.9'){throw 'Patch did not update the install inventory.'}
           if((Get-Content (Join-Path $app 'customer-preserved.txt')) -ne 'customer-data-preserved'){throw 'Patch changed a customer file.'}
+          foreach($pr in $observed.Values){if(-not $pr.HasExited){if(-not $pr.WaitForExit(60000)){throw 'Updater runner did not exit after confirmation.'}};$pr.Dispose()}
+          Start-Sleep -Seconds 2
           Write-Host 'PASS: original signing key, native patch updater, panel closure, confirmation and temporary-file cleanup.'
           Install (Join-Path $work 'ZyroFools-Setup-1.2.9-Beta.exe')
           if((Get-Content (Join-Path $app 'customer-preserved.txt')) -ne 'customer-data-preserved'){throw 'Upgrade changed a customer file.'}
